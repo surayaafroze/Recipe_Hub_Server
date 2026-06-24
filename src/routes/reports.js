@@ -67,6 +67,13 @@ router.patch('/:id/status', verifyToken, isAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Report not found' });
     }
 
+    if (status === 'removed') {
+      const report = await collections.reports.findOne({ _id: reportId });
+      if (report && report.recipeId) {
+        await collections.recipes.deleteOne({ _id: new ObjectId(report.recipeId) });
+      }
+    }
+
     res.json({ message: 'Report status updated successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });

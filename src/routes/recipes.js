@@ -139,4 +139,67 @@ router.delete('/:id', verifyToken, async (req, res) => {
   }
 });
 
+// PATCH toggle feature recipe (Protected, Admin only)
+router.patch('/:id/feature', verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const recipeId = new ObjectId(req.params.id);
+    const { isFeatured } = req.body;
+
+    const result = await collections.recipes.updateOne(
+      { _id: recipeId },
+      { $set: { isFeatured } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Recipe not found' });
+    }
+
+    res.json({ message: 'Recipe feature status updated', isFeatured });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH toggle like recipe (Protected)
+router.patch('/:id/like', verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const recipeId = new ObjectId(req.params.id);
+
+    const recipe = await collections.recipes.findOne({ _id: recipeId });
+    if (!recipe) {
+      return res.status(404).json({ error: 'Recipe not found' });
+    }
+
+    const likedBy = recipe.likedBy || [];
+    const userIndex = likedBy.indexOf(user.id);
+
+    let updateQuery;
+    if (userIndex === -1) {
+      // User hasn't liked it yet -> Add like
+      updateQuery = {
+        $push: { likedBy: user.id },
+        $inc: { likesCount: 1 }
+      };
+    } else {
+      // User already liked it -> Remove like
+      updateQuery = {
+        $pull: { likedBy: user.id },
+        $inc: { likesCount: -1 }
+      };
+    }
+
+    await collections.recipes.updateOne({ _id: recipeId }, updateQuery);
+    
+    res.json({ message: 'Like status toggled', liked: userIndex === -1 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

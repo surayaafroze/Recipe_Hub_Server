@@ -30,9 +30,45 @@ router.post('/create-checkout-session', verifyToken, async (req, res) => {
   }
 });
 
+router.post('/purchase-recipe', verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const { recipeId } = req.body;
+    
+    const { ObjectId } = require('mongodb');
+    const recipe = await collections.recipes.findOne({ _id: new ObjectId(recipeId) });
+    if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
+    
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      customer_email: user.email,
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: `Recipe: ${recipe.recipeName}`,
+            },
+            unit_amount: 500, // Fixed $5 price for recipes
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment-success?session_id={CHECKOUT_SESSION_ID}&type=recipe&recipeId=${recipeId}`,
+      cancel_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/recipe/${recipeId}`,
+      client_reference_id: user.id
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post('/verify-session', verifyToken, async (req, res) => {
   try {
-    const { sessionId } = req.body;
+    const { sessionId, type, recipeId } = req.body;
     const user = req.user;
 
     if (!sessionId) {
@@ -57,15 +93,22 @@ router.post('/verify-session', verifyToken, async (req, res) => {
         paymentStatus: session.payment_status,
         paidAt: new Date()
       };
+      
+      if (type === 'recipe' && recipeId) {
+        paymentData.recipeId = recipeId;
+      }
+      
       await collections.payments.insertOne(paymentData);
 
-      // 2. Mark user as premium in Better Auth users collection
-      await collections.users.updateOne(
-        { id: user.id }, // Note: BetterAuth uses `id`, not MongoDB `_id`
-        { $set: { plan: 'premium', isPremium: true } }
-      );
+      if (type !== 'recipe') {
+        // Mark user as premium in Better Auth users collection
+        await collections.users.updateOne(
+          { id: user.id }, // Note: BetterAuth uses `id`, not MongoDB `_id`
+          { $set: { plan: 'premium', isPremium: true } }
+        );
+      }
 
-      return res.json({ message: 'Payment successful', isPremium: true });
+      return res.json({ message: 'Payment successful', isPremium: type !== 'recipe' });
     }
 
     res.status(400).json({ error: 'Payment not successful yet' });

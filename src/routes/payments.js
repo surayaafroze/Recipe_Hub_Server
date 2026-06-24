@@ -36,6 +36,9 @@ router.post('/purchase-recipe', verifyToken, async (req, res) => {
     const { recipeId } = req.body;
     
     const { ObjectId } = require('mongodb');
+    if (!ObjectId.isValid(recipeId)) {
+      return res.status(400).json({ error: 'Invalid recipe ID' });
+    }
     const recipe = await collections.recipes.findOne({ _id: new ObjectId(recipeId) });
     if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
     

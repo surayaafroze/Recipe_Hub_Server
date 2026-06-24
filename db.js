@@ -11,7 +11,7 @@ const client = new MongoClient(uri, {
   }
 });
 
-const db = client.db("recipehub");
+const db = client.db("Recipe_Hub");
 
 const collections = {
   users: db.collection("users"),

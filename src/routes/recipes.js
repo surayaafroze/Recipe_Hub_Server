@@ -41,6 +41,44 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET my recipes (Protected)
+router.get('/my-recipes', verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    const recipes = await collections.recipes.find({ authorId: user.id }).sort({ createdAt: -1 }).toArray();
+    res.json(recipes);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET my purchased recipes (Protected)
+router.get('/purchased', verifyToken, async (req, res) => {
+  try {
+    const user = req.user;
+    
+    // Find all payment records for recipes by this user
+    const payments = await collections.payments.find({ 
+      userId: user.id, 
+      recipeId: { $exists: true } 
+    }).toArray();
+    
+    const purchasedRecipeIds = payments.map(p => new ObjectId(p.recipeId));
+    
+    if (purchasedRecipeIds.length === 0) {
+      return res.json([]);
+    }
+
+    const recipes = await collections.recipes.find({ 
+      _id: { $in: purchasedRecipeIds } 
+    }).sort({ createdAt: -1 }).toArray();
+    
+    res.json(recipes);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET single recipe
 router.get('/:id', async (req, res) => {
   try {

@@ -14,6 +14,8 @@ const recipeRoutes = require('./src/routes/recipes');
 const favoriteRoutes = require('./src/routes/favorites');
 const reportRoutes = require('./src/routes/reports');
 const paymentRoutes = require('./src/routes/payments');
+const adminRoutes = require('./src/routes/admin');
+const userRoutes = require('./src/routes/users');
 
 app.get('/', (req, res) => {
   res.send('RecipeHub Server is running!')
@@ -24,6 +26,8 @@ app.use('/api/recipes', recipeRoutes);
 app.use('/api/favorites', favoriteRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/users', userRoutes);
 
 
 

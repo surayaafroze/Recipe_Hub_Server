@@ -13,7 +13,7 @@ const verifyToken = async (req, res, next) => {
     // Validate the token seamlessly with BetterAuth native get-session API
     const response = await fetch('http://localhost:3000/api/auth/get-session', {
       headers: {
-        'Authorization': `Bearer ${token}`
+        'Cookie': `better-auth.session_token=${token}`
       }
     });
     

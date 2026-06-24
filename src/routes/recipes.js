@@ -79,6 +79,26 @@ router.get('/purchased', verifyToken, async (req, res) => {
   }
 });
 
+// GET featured recipes (Public)
+router.get('/featured', async (req, res) => {
+  try {
+    const recipes = await collections.recipes.find({ isFeatured: true }).limit(6).toArray();
+    res.json(recipes);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET popular recipes (Public)
+router.get('/popular', async (req, res) => {
+  try {
+    const recipes = await collections.recipes.find({}).sort({ likesCount: -1 }).limit(6).toArray();
+    res.json(recipes);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET single recipe
 router.get('/:id', async (req, res) => {
   try {

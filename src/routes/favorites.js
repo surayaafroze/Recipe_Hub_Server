@@ -1,12 +1,12 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const { collections } = require('../../db');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyUser } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
 // Add to favorites
-router.post('/', verifyToken, async (req, res) => {
+router.post('/', verifyUser, async (req, res) => {
   try {
     const user = req.user;
     const { recipeId } = req.body;
@@ -46,7 +46,7 @@ router.post('/', verifyToken, async (req, res) => {
 });
 
 // Remove from favorites
-router.delete('/:recipeId', verifyToken, async (req, res) => {
+router.delete('/:recipeId', verifyUser, async (req, res) => {
   try {
     const user = req.user;
     const recipeId = req.params.recipeId;
@@ -67,7 +67,7 @@ router.delete('/:recipeId', verifyToken, async (req, res) => {
 });
 
 // Get user favorites
-router.get('/', verifyToken, async (req, res) => {
+router.get('/', verifyUser, async (req, res) => {
   try {
     const user = req.user;
     

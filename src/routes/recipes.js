@@ -1,11 +1,13 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const { collections } = require('../../db');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyUser, requireAdmin } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
-// GET all recipes (Pagination + Filtering)
+// ─── Public Routes ────────────────────────────────────────────────────────────
+
+// GET all recipes (Pagination + Filtering) — PUBLIC
 router.get('/', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -13,10 +15,7 @@ router.get('/', async (req, res) => {
     const skip = (page - 1) * limit;
 
     const query = {};
-    
-    // Filtering by category using $in
     if (req.query.categories) {
-      // e.g., ?categories=Breakfast,Lunch
       const categoriesArray = req.query.categories.split(',');
       query.category = { $in: categoriesArray };
     }
@@ -41,45 +40,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET my recipes (Protected)
-router.get('/my-recipes', verifyToken, async (req, res) => {
-  try {
-    const user = req.user;
-    const recipes = await collections.recipes.find({ authorId: user.id }).sort({ createdAt: -1 }).toArray();
-    res.json(recipes);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// GET my purchased recipes (Protected)
-router.get('/purchased', verifyToken, async (req, res) => {
-  try {
-    const user = req.user;
-    
-    // Find all payment records for recipes by this user
-    const payments = await collections.payments.find({ 
-      userId: user.id, 
-      recipeId: { $exists: true } 
-    }).toArray();
-    
-    const purchasedRecipeIds = payments.map(p => new ObjectId(p.recipeId));
-    
-    if (purchasedRecipeIds.length === 0) {
-      return res.json([]);
-    }
-
-    const recipes = await collections.recipes.find({ 
-      _id: { $in: purchasedRecipeIds } 
-    }).sort({ createdAt: -1 }).toArray();
-    
-    res.json(recipes);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// GET featured recipes (Public)
+// GET featured recipes — PUBLIC
 router.get('/featured', async (req, res) => {
   try {
     const recipes = await collections.recipes.find({ isFeatured: true }).limit(6).toArray();
@@ -89,7 +50,7 @@ router.get('/featured', async (req, res) => {
   }
 });
 
-// GET popular recipes (Public)
+// GET popular recipes — PUBLIC
 router.get('/popular', async (req, res) => {
   try {
     const recipes = await collections.recipes.find({}).sort({ likesCount: -1 }).limit(6).toArray();
@@ -99,7 +60,42 @@ router.get('/popular', async (req, res) => {
   }
 });
 
-// GET single recipe
+// ─── Protected User Routes ────────────────────────────────────────────────────
+
+// GET my recipes — AUTH REQUIRED
+router.get('/my-recipes', verifyUser, async (req, res) => {
+  try {
+    const user = req.user;
+    const recipes = await collections.recipes.find({ authorId: user.id }).sort({ createdAt: -1 }).toArray();
+    res.json(recipes);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET purchased recipes — AUTH REQUIRED
+router.get('/purchased', verifyUser, async (req, res) => {
+  try {
+    const user = req.user;
+    const payments = await collections.payments.find({
+      userId: user.id,
+      recipeId: { $exists: true }
+    }).toArray();
+
+    const purchasedRecipeIds = payments.map(p => new ObjectId(p.recipeId));
+    if (purchasedRecipeIds.length === 0) return res.json([]);
+
+    const recipes = await collections.recipes.find({
+      _id: { $in: purchasedRecipeIds }
+    }).sort({ createdAt: -1 }).toArray();
+
+    res.json(recipes);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET single recipe — PUBLIC
 router.get('/:id', async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
@@ -115,17 +111,19 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST new recipe (Protected)
-router.post('/', verifyToken, async (req, res) => {
+// POST create recipe — AUTH REQUIRED (max 2 for normal users)
+router.post('/', verifyUser, async (req, res) => {
   try {
-    const user = req.user; // from JWT token payload
-    
-    // User Relation & Limit Check
-    // If user is not premium and not admin, check if they already have 2 recipes
-    if (!user.isPremium && user.plan !== 'premium' && user.role !== 'admin') {
+    const user = req.user;
+    const isPremium = user.isPremium === true || user.plan === 'premium';
+
+    // Enforce 2-recipe limit for non-premium, non-admin users
+    if (!isPremium && user.role !== 'admin') {
       const userRecipeCount = await collections.recipes.countDocuments({ authorId: user.id });
       if (userRecipeCount >= 2) {
-        return res.status(403).json({ error: 'Normal users can only add 2 recipes. Please upgrade to premium.' });
+        return res.status(403).json({
+          error: 'Recipe limit reached. Normal users can only add 2 recipes. Upgrade to Premium for unlimited access.'
+        });
       }
     }
 
@@ -135,6 +133,7 @@ router.post('/', verifyToken, async (req, res) => {
       authorName: user.name,
       authorEmail: user.email,
       likesCount: 0,
+      likedBy: [],
       status: 'active',
       isFeatured: false,
       createdAt: new Date(),
@@ -148,46 +147,40 @@ router.post('/', verifyToken, async (req, res) => {
   }
 });
 
-// PUT update recipe (Protected, Author or Admin only)
-router.put('/:id', verifyToken, async (req, res) => {
+// PUT update recipe — AUTH REQUIRED (own recipes or admin)
+router.put('/:id', verifyUser, async (req, res) => {
   try {
     const user = req.user;
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid recipe ID' });
     const recipeId = new ObjectId(req.params.id);
 
     const existingRecipe = await collections.recipes.findOne({ _id: recipeId });
-    if (!existingRecipe) {
-      return res.status(404).json({ error: 'Recipe not found' });
-    }
+    if (!existingRecipe) return res.status(404).json({ error: 'Recipe not found' });
 
     if (existingRecipe.authorId !== user.id && user.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized to update this recipe' });
     }
 
     const updateData = { ...req.body, updatedAt: new Date() };
-    delete updateData._id; // prevent _id overwrite
-    delete updateData.authorId; // prevent changing author
+    delete updateData._id;
+    delete updateData.authorId;
 
-    const result = await collections.recipes.updateOne(
-      { _id: recipeId },
-      { $set: updateData }
-    );
-
+    await collections.recipes.updateOne({ _id: recipeId }, { $set: updateData });
     res.json({ message: 'Recipe updated successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// DELETE recipe (Protected, Author or Admin only)
-router.delete('/:id', verifyToken, async (req, res) => {
+// DELETE recipe — AUTH REQUIRED (own recipes or admin)
+router.delete('/:id', verifyUser, async (req, res) => {
   try {
     const user = req.user;
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid recipe ID' });
     const recipeId = new ObjectId(req.params.id);
 
     const existingRecipe = await collections.recipes.findOne({ _id: recipeId });
-    if (!existingRecipe) {
-      return res.status(404).json({ error: 'Recipe not found' });
-    }
+    if (!existingRecipe) return res.status(404).json({ error: 'Recipe not found' });
 
     if (existingRecipe.authorId !== user.id && user.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized to delete this recipe' });
@@ -200,14 +193,10 @@ router.delete('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// PATCH toggle feature recipe (Protected, Admin only)
-router.patch('/:id/feature', verifyToken, async (req, res) => {
+// PATCH feature recipe — ADMIN ONLY
+router.patch('/:id/feature', requireAdmin, async (req, res) => {
   try {
-    const user = req.user;
-    if (user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid recipe ID' });
     const recipeId = new ObjectId(req.params.id);
     const { isFeatured } = req.body;
 
@@ -216,47 +205,34 @@ router.patch('/:id/feature', verifyToken, async (req, res) => {
       { $set: { isFeatured } }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: 'Recipe not found' });
-    }
-
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Recipe not found' });
     res.json({ message: 'Recipe feature status updated', isFeatured });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// PATCH toggle like recipe (Protected)
-router.patch('/:id/like', verifyToken, async (req, res) => {
+// PATCH toggle like — AUTH REQUIRED
+router.patch('/:id/like', verifyUser, async (req, res) => {
   try {
     const user = req.user;
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid recipe ID' });
     const recipeId = new ObjectId(req.params.id);
 
     const recipe = await collections.recipes.findOne({ _id: recipeId });
-    if (!recipe) {
-      return res.status(404).json({ error: 'Recipe not found' });
-    }
+    if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
 
     const likedBy = recipe.likedBy || [];
     const userIndex = likedBy.indexOf(user.id);
 
     let updateQuery;
     if (userIndex === -1) {
-      // User hasn't liked it yet -> Add like
-      updateQuery = {
-        $push: { likedBy: user.id },
-        $inc: { likesCount: 1 }
-      };
+      updateQuery = { $push: { likedBy: user.id }, $inc: { likesCount: 1 } };
     } else {
-      // User already liked it -> Remove like
-      updateQuery = {
-        $pull: { likedBy: user.id },
-        $inc: { likesCount: -1 }
-      };
+      updateQuery = { $pull: { likedBy: user.id }, $inc: { likesCount: -1 } };
     }
 
     await collections.recipes.updateOne({ _id: recipeId }, updateQuery);
-    
     res.json({ message: 'Like status toggled', liked: userIndex === -1 });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -1,11 +1,11 @@
 const express = require('express');
 const { collections } = require('../../db');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyUser } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
-// GET User Profile
-router.get('/profile', verifyToken, async (req, res) => {
+// GET User Profile — AUTH REQUIRED
+router.get('/profile', verifyUser, async (req, res) => {
   try {
     const user = await collections.users.findOne({ id: req.user.id });
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -16,39 +16,49 @@ router.get('/profile', verifyToken, async (req, res) => {
   }
 });
 
-// GET Dashboard Stats
-router.get('/dashboard-stats', verifyToken, async (req, res) => {
+// GET Dashboard Stats — AUTH REQUIRED
+router.get('/dashboard-stats', verifyUser, async (req, res) => {
   try {
     const user = await collections.users.findOne({ id: req.user.id });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const totalRecipes = await collections.recipes.countDocuments({ authorId: user.id });
     const totalFavorites = await collections.favorites.countDocuments({ userId: user.id });
-    
-    // Calculate total likes received on user's recipes
+
     const userRecipes = await collections.recipes.find({ authorId: user.id }).toArray();
-    const totalLikes = userRecipes.reduce((sum, recipe) => sum + (recipe.likesCount || 0), 0);
+    const totalLikes = userRecipes.reduce((sum, r) => sum + (r.likesCount || 0), 0);
+
+    const isPremium = user.isPremium === true || user.plan === 'premium';
 
     res.json({
       totalRecipes,
       totalFavorites,
       totalLikesReceived: totalLikes,
-      isPremium: user.isPremium || user.plan === 'premium'
+      isPremium,
+      // Expose recipe limit info for frontend UI
+      recipeLimit: isPremium || user.role === 'admin' ? null : 2,
+      canAddMore: isPremium || user.role === 'admin' || totalRecipes < 2
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// UPDATE User Profile
-router.put('/profile', verifyToken, async (req, res) => {
+// UPDATE User Profile — AUTH REQUIRED
+router.put('/profile', verifyUser, async (req, res) => {
   try {
     const { name, image } = req.body;
+
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
     await collections.users.updateOne(
       { id: req.user.id },
-      { $set: { name, image, updatedAt: new Date() } }
+      { $set: { name: name.trim(), image: image || '', updatedAt: new Date() } }
     );
-    res.json({ message: 'Profile updated successfully' });
+
+    res.json({ message: 'Profile updated successfully', name: name.trim(), image });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

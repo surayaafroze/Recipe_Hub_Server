@@ -1,11 +1,11 @@
 const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { collections } = require('../../db');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyUser } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
-router.post('/create-checkout-session', verifyToken, async (req, res) => {
+router.post('/create-checkout-session', verifyUser, async (req, res) => {
   try {
     const user = req.user;
     

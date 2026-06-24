@@ -1,55 +1,53 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const { collections } = require('../../db');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyUser, requireAdmin } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
-const isAdmin = (req, res, next) => {
-  if (req.user && req.user.role === 'admin') {
-    return next();
-  }
-  return res.status(403).json({ error: 'Access denied. Admin only.' });
-};
-
-// Users Listing
-router.get('/users', verifyToken, isAdmin, async (req, res) => {
+// ── Admin: List all users ──────────────────────────────────────────────────────
+router.get('/users', requireAdmin, async (req, res) => {
   try {
     const users = await collections.users.find({}).sort({ createdAt: -1 }).toArray();
-    // Sanitize output by not sending passwords if they exist
-    const sanitizedUsers = users.map(u => {
-       const { password, ...safeUser } = u;
-       return safeUser;
-    });
+    const sanitizedUsers = users.map(({ password, ...safeUser }) => safeUser);
     res.json(sanitizedUsers);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Toggle Block Status
-router.patch('/users/:id/block', verifyToken, isAdmin, async (req, res) => {
+// ── Admin: Block / Unblock user ────────────────────────────────────────────────
+router.patch('/users/:id/block', requireAdmin, async (req, res) => {
   try {
-    const userId = req.params.id; // Better Auth uses string ID
+    const userId = req.params.id;
     const { isBlocked } = req.body;
+
+    if (typeof isBlocked !== 'boolean') {
+      return res.status(400).json({ error: 'isBlocked must be a boolean' });
+    }
+
+    // Prevent admin from blocking themselves
+    if (userId === req.user.id) {
+      return res.status(400).json({ error: 'Cannot block your own account.' });
+    }
 
     const result = await collections.users.updateOne(
       { id: userId },
-      { $set: { isBlocked } }
+      { $set: { isBlocked, updatedAt: new Date() } }
     );
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ message: 'User block status updated', isBlocked });
+    res.json({ message: `User ${isBlocked ? 'blocked' : 'unblocked'} successfully`, isBlocked });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Payments Listing
-router.get('/payments', verifyToken, isAdmin, async (req, res) => {
+// ── Admin: List all payments ───────────────────────────────────────────────────
+router.get('/payments', requireAdmin, async (req, res) => {
   try {
     const payments = await collections.payments.find({}).sort({ paidAt: -1 }).toArray();
     res.json(payments);
@@ -58,19 +56,19 @@ router.get('/payments', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Admin Stats Overview
-router.get('/stats', verifyToken, isAdmin, async (req, res) => {
+// ── Admin: Platform stats ──────────────────────────────────────────────────────
+router.get('/stats', requireAdmin, async (req, res) => {
   try {
     const usersCount = await collections.users.countDocuments();
-    const premiumCount = await collections.users.countDocuments({ 
-      $or: [{ isPremium: true }, { plan: 'premium' }] 
+    const premiumCount = await collections.users.countDocuments({
+      $or: [{ isPremium: true }, { plan: 'premium' }]
     });
     const recipesCount = await collections.recipes.countDocuments();
     const reportsCount = await collections.reports.countDocuments({ status: 'pending' });
     const paymentsAggr = await collections.payments.aggregate([
-      { $group: { _id: null, total: { $sum: "$amount" } } }
+      { $group: { _id: null, total: { $sum: '$amount' } } }
     ]).toArray();
-    
+
     res.json({
       totalUsers: usersCount,
       totalPremiumMembers: premiumCount,

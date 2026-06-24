@@ -119,7 +119,7 @@ router.post('/', verifyToken, async (req, res) => {
     
     // User Relation & Limit Check
     // If user is not premium and not admin, check if they already have 2 recipes
-    if (user.plan !== 'premium' && user.plan !== 'pro' && user.role !== 'admin') {
+    if (!user.isPremium && user.plan !== 'premium' && user.role !== 'admin') {
       const userRecipeCount = await collections.recipes.countDocuments({ authorId: user.id });
       if (userRecipeCount >= 2) {
         return res.status(403).json({ error: 'Normal users can only add 2 recipes. Please upgrade to premium.' });

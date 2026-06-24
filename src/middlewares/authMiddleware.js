@@ -1,5 +1,3 @@
-const { jwtVerify } = require('jose-cjs');
-
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -12,24 +10,31 @@ const verifyToken = async (req, res, next) => {
   }
   
   try {
-    // We now use the BETTER_AUTH_SECRET to verify the JWT session cookie 
-    // that getValidToken fetches from the Next.js API route.
-    const secret = new TextEncoder().encode(process.env.BETTER_AUTH_SECRET);
-    const { payload } = await jwtVerify(token, secret);
+    // Validate the token seamlessly with BetterAuth native get-session API
+    const response = await fetch('http://localhost:3000/api/auth/get-session', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
     
-    // better-auth JWT payload contains session and user objects
-    req.user = payload.user || payload.session?.user || payload;
-    
-    // Some routes expect id instead of _id or vice versa
-    if (!req.user.id && req.user._id) {
-        req.user.id = req.user._id;
-    } else if (req.user.id && !req.user._id) {
-        req.user._id = req.user.id;
+    if (!response.ok) {
+        return res.status(401).json({ msg: "unauthorized" });
     }
+    
+    const data = await response.json();
+    if (!data || !data.user) {
+        return res.status(401).json({ msg: "unauthorized" });
+    }
+    
+    req.user = data.user;
+    
+    // Normalize id
+    if (!req.user.id && req.user._id) req.user.id = req.user._id;
+    if (req.user.id && !req.user._id) req.user._id = req.user.id;
     
     next();
   } catch (error) {
-    console.error('JWT Verification Error:', error.message);
+    console.error('Session Verification Error:', error.message);
     return res.status(401).json({ msg: "unauthorized" });
   }
 };

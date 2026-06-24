@@ -9,30 +9,27 @@ app.use(cors());
 app.use(express.json());
 const port = process.env.PORT || 5000
 
+// Import routes
+const recipeRoutes = require('./src/routes/recipes');
+const favoriteRoutes = require('./src/routes/favorites');
+const reportRoutes = require('./src/routes/reports');
+const paymentRoutes = require('./src/routes/payments');
+
 app.get('/', (req, res) => {
   res.send('RecipeHub Server is running!')
 })
 
+// Mount routes
+app.use('/api/recipes', recipeRoutes);
+app.use('/api/favorites', favoriteRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/payments', paymentRoutes);
 
 
 
 
-const jwks = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}`))
-const verifyToken=async(req,res,next)=>{
-  const authHeader=req.headers.authorization;
-  if(!authHeader || !authHeader.startsWith('Bearer ') ){
-    return res.status(401).json({msg:"unauthorized"})
-  }
-  const token = authHeader.split(' ')[1]
-  if(!token){
-    return res.status(401).json({msg:"unauthorized"})
-  }
-  try{
-const {payload}=await jwtVerify(token,jwks)
 
-  }catch(error){
- return res.status(401).json({msg:"unauthorized"})
-  }}
+// Auth middleware removed, now imported locally in routes
 
 
 

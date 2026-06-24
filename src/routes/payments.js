@@ -2,13 +2,21 @@ const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { collections } = require('../../db');
 const { verifyUser } = require('../middlewares/authMiddleware');
+const { ObjectId } = require('mongodb');
 
 const router = express.Router();
 
+// ── Create Premium Membership Checkout ────────────────────────────────────────
 router.post('/create-checkout-session', verifyUser, async (req, res) => {
   try {
     const user = req.user;
-    
+
+    // Don't allow already-premium users to buy again
+    const dbUser = await collections.users.findOne({ id: user.id });
+    if (dbUser && (dbUser.isPremium || dbUser.plan === 'premium')) {
+      return res.status(400).json({ error: 'You are already a Premium member.' });
+    }
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       customer_email: user.email,
@@ -18,37 +26,46 @@ router.post('/create-checkout-session', verifyUser, async (req, res) => {
             currency: 'usd',
             product_data: {
               name: 'RecipeHub Premium Membership',
-              description: 'Unlock unlimited recipe creation and premium badge'
+              description: 'Unlock unlimited recipe creation and premium badge',
             },
-            unit_amount: 1500, // $15.00 one-time payment
+            unit_amount: 1500, // $15.00
           },
           quantity: 1,
         },
       ],
       mode: 'payment',
-      success_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment-success?session_id={CHECKOUT_SESSION_ID}&type=premium`,
       cancel_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/dashboard`,
-      client_reference_id: user.id
+      client_reference_id: user.id,
+      metadata: { userId: user.id, type: 'premium' }
     });
 
     res.json({ url: session.url });
   } catch (error) {
+    console.error('Stripe checkout error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post('/purchase-recipe', verifyToken, async (req, res) => {
+// ── Create Recipe Purchase Checkout ───────────────────────────────────────────
+router.post('/purchase-recipe', verifyUser, async (req, res) => {
   try {
     const user = req.user;
     const { recipeId } = req.body;
-    
-    const { ObjectId } = require('mongodb');
-    if (!ObjectId.isValid(recipeId)) {
+
+    if (!recipeId || !ObjectId.isValid(recipeId)) {
       return res.status(400).json({ error: 'Invalid recipe ID' });
     }
+
     const recipe = await collections.recipes.findOne({ _id: new ObjectId(recipeId) });
     if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
-    
+
+    // Check if already purchased
+    const alreadyPurchased = await collections.payments.findOne({ userId: user.id, recipeId });
+    if (alreadyPurchased) {
+      return res.status(400).json({ error: 'You already own this recipe.' });
+    }
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       customer_email: user.email,
@@ -58,8 +75,9 @@ router.post('/purchase-recipe', verifyToken, async (req, res) => {
             currency: 'usd',
             product_data: {
               name: `Recipe: ${recipe.recipeName}`,
+              description: `By ${recipe.authorName}`,
             },
-            unit_amount: 500, // Fixed $5 price for recipes
+            unit_amount: 500, // $5.00
           },
           quantity: 1,
         },
@@ -67,16 +85,19 @@ router.post('/purchase-recipe', verifyToken, async (req, res) => {
       mode: 'payment',
       success_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment-success?session_id={CHECKOUT_SESSION_ID}&type=recipe&recipeId=${recipeId}`,
       cancel_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/recipe/${recipeId}`,
-      client_reference_id: user.id
+      client_reference_id: user.id,
+      metadata: { userId: user.id, recipeId, type: 'recipe' }
     });
 
     res.json({ url: session.url });
   } catch (error) {
+    console.error('Recipe purchase error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post('/verify-session', verifyToken, async (req, res) => {
+// ── Verify Payment Session & Save to DB ───────────────────────────────────────
+router.post('/verify-session', verifyUser, async (req, res) => {
   try {
     const { sessionId, type, recipeId } = req.body;
     const user = req.user;
@@ -85,44 +106,46 @@ router.post('/verify-session', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Session ID required' });
     }
 
-    // Check if payment was already processed to avoid duplicates
+    // Idempotency: skip if already processed
     const existingPayment = await collections.payments.findOne({ transactionId: sessionId });
     if (existingPayment) {
-      return res.json({ message: 'Payment already processed', isPremium: true });
+      return res.json({ message: 'Payment already processed', success: true });
     }
 
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-    if (session.payment_status === 'paid') {
-      // 1. Save payment into payments collection
-      const paymentData = {
-        userId: user.id,
-        userEmail: user.email,
-        amount: session.amount_total / 100, // convert cents to standard currency
-        transactionId: sessionId,
-        paymentStatus: session.payment_status,
-        paidAt: new Date()
-      };
-      
-      if (type === 'recipe' && recipeId) {
-        paymentData.recipeId = recipeId;
-      }
-      
-      await collections.payments.insertOne(paymentData);
-
-      if (type !== 'recipe') {
-        // Mark user as premium in Better Auth users collection
-        await collections.users.updateOne(
-          { id: user.id }, // Note: BetterAuth uses `id`, not MongoDB `_id`
-          { $set: { plan: 'premium', isPremium: true } }
-        );
-      }
-
-      return res.json({ message: 'Payment successful', isPremium: type !== 'recipe' });
+    if (session.payment_status !== 'paid') {
+      return res.status(400).json({ error: 'Payment not completed' });
     }
 
-    res.status(400).json({ error: 'Payment not successful yet' });
+    // Save payment record
+    const paymentData = {
+      userId: user.id,
+      userEmail: user.email,
+      amount: session.amount_total / 100,
+      transactionId: sessionId,
+      paymentStatus: session.payment_status,
+      type: type || 'premium',
+      paidAt: new Date(),
+    };
+
+    if (type === 'recipe' && recipeId) {
+      paymentData.recipeId = recipeId;
+    }
+
+    await collections.payments.insertOne(paymentData);
+
+    // If premium purchase, upgrade user
+    if (type !== 'recipe') {
+      await collections.users.updateOne(
+        { id: user.id },
+        { $set: { plan: 'premium', isPremium: true, updatedAt: new Date() } }
+      );
+    }
+
+    return res.json({ message: 'Payment successful', success: true });
   } catch (error) {
+    console.error('Verify session error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });

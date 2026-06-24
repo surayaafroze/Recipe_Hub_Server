@@ -102,6 +102,9 @@ router.get('/popular', async (req, res) => {
 // GET single recipe
 router.get('/:id', async (req, res) => {
   try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid recipe ID format' });
+    }
     const recipe = await collections.recipes.findOne({ _id: new ObjectId(req.params.id) });
     if (!recipe) {
       return res.status(404).json({ error: 'Recipe not found' });

@@ -14,11 +14,18 @@ router.post('/create-checkout-session', verifyToken, async (req, res) => {
       customer_email: user.email,
       line_items: [
         {
-          price: 'price_1TlLmXCi3GOPWqHxjMUTnTke', // User provided Stripe price ID
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: 'RecipeHub Premium Membership',
+              description: 'Unlock unlimited recipe creation and premium badge'
+            },
+            unit_amount: 1500, // $15.00 one-time payment
+          },
           quantity: 1,
         },
       ],
-      mode: 'subscription',
+      mode: 'payment',
       success_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/dashboard`,
       client_reference_id: user.id

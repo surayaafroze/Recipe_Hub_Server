@@ -12,7 +12,11 @@ router.post('/create-checkout-session', verifyUser, async (req, res) => {
     const user = req.user;
 
     // Don't allow already-premium users to buy again
-    const dbUser = await collections.users.findOne({ id: user.id });
+    const userQuery = { $or: [{ id: user.id }] };
+    if (ObjectId.isValid(user.id)) {
+      userQuery.$or.push({ _id: new ObjectId(user.id) });
+    }
+    const dbUser = await collections.users.findOne(userQuery);
     if (dbUser && (dbUser.isPremium || dbUser.plan === 'premium')) {
       return res.status(400).json({ error: 'You are already a Premium member.' });
     }
@@ -138,8 +142,12 @@ router.post('/verify-session', verifyUser, async (req, res) => {
     // If premium purchase, upgrade user plan and isPremium status.
     // Safeguard: Do NOT modify the user's role (admin/user) under any circumstance.
     if (type !== 'recipe') {
+      const updateQuery = { $or: [{ id: user.id }, { email: user.email }] };
+      if (ObjectId.isValid(user.id)) {
+        updateQuery.$or.push({ _id: new ObjectId(user.id) });
+      }
       await collections.users.updateOne(
-        { $or: [{ id: user.id }, { email: user.email }] },
+        updateQuery,
         { $set: { plan: 'premium', isPremium: true, updatedAt: new Date() } }
       );
     }

@@ -1,13 +1,22 @@
 const express = require('express');
+const { ObjectId } = require('mongodb');
 const { collections } = require('../../db');
 const { verifyUser } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
+const getUserQuery = (id) => {
+  const query = { $or: [{ id }] };
+  if (ObjectId.isValid(id)) {
+    query.$or.push({ _id: new ObjectId(id) });
+  }
+  return query;
+};
+
 // GET User Profile — AUTH REQUIRED
 router.get('/profile', verifyUser, async (req, res) => {
   try {
-    const user = await collections.users.findOne({ id: req.user.id });
+    const user = await collections.users.findOne(getUserQuery(req.user.id));
     if (!user) return res.status(404).json({ error: 'User not found' });
     const { password, ...safeUser } = user;
     res.json(safeUser);
@@ -19,7 +28,7 @@ router.get('/profile', verifyUser, async (req, res) => {
 // GET Dashboard Stats — AUTH REQUIRED
 router.get('/dashboard-stats', verifyUser, async (req, res) => {
   try {
-    const user = await collections.users.findOne({ id: req.user.id });
+    const user = await collections.users.findOne(getUserQuery(req.user.id));
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const totalRecipes = await collections.recipes.countDocuments({ authorId: user.id });
@@ -54,7 +63,7 @@ router.put('/profile', verifyUser, async (req, res) => {
     }
 
     await collections.users.updateOne(
-      { id: req.user.id },
+      getUserQuery(req.user.id),
       { $set: { name: name.trim(), image: image || '', updatedAt: new Date() } }
     );
 

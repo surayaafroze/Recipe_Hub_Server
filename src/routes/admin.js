@@ -31,8 +31,13 @@ router.patch('/users/:id/block', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Cannot block your own account.' });
     }
 
+    const query = { $or: [{ id: userId }] };
+    if (ObjectId.isValid(userId)) {
+      query.$or.push({ _id: new ObjectId(userId) });
+    }
+
     const result = await collections.users.updateOne(
-      { id: userId },
+      query,
       { $set: { isBlocked, updatedAt: new Date() } }
     );
 
@@ -64,7 +69,8 @@ router.get('/stats', requireAdmin, async (req, res) => {
       $or: [{ isPremium: true }, { plan: 'premium' }]
     });
     const recipesCount = await collections.recipes.countDocuments();
-    const reportsCount = await collections.reports.countDocuments({ status: 'pending' });
+    const totalReportsCount = await collections.reports.countDocuments({});
+    const pendingReportsCount = await collections.reports.countDocuments({ status: 'pending' });
     const paymentsAggr = await collections.payments.aggregate([
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]).toArray();
@@ -73,7 +79,8 @@ router.get('/stats', requireAdmin, async (req, res) => {
       totalUsers: usersCount,
       totalPremiumMembers: premiumCount,
       totalRecipes: recipesCount,
-      pendingReports: reportsCount,
+      totalReports: totalReportsCount,
+      pendingReports: pendingReportsCount,
       totalRevenue: paymentsAggr.length > 0 ? paymentsAggr[0].total : 0
     });
   } catch (error) {

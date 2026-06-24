@@ -135,10 +135,11 @@ router.post('/verify-session', verifyUser, async (req, res) => {
 
     await collections.payments.insertOne(paymentData);
 
-    // If premium purchase, upgrade user
+    // If premium purchase, upgrade user plan and isPremium status.
+    // Safeguard: Do NOT modify the user's role (admin/user) under any circumstance.
     if (type !== 'recipe') {
       await collections.users.updateOne(
-        { id: user.id },
+        { $or: [{ id: user.id }, { email: user.email }] },
         { $set: { plan: 'premium', isPremium: true, updatedAt: new Date() } }
       );
     }

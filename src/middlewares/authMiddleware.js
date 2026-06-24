@@ -1,6 +1,4 @@
-const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
-
-const jwks = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
+const { jwtVerify } = require('jose-cjs');
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -14,10 +12,24 @@ const verifyToken = async (req, res, next) => {
   }
   
   try {
-    const { payload } = await jwtVerify(token, jwks);
-    req.user = payload;
+    // We now use the BETTER_AUTH_SECRET to verify the JWT session cookie 
+    // that getValidToken fetches from the Next.js API route.
+    const secret = new TextEncoder().encode(process.env.BETTER_AUTH_SECRET);
+    const { payload } = await jwtVerify(token, secret);
+    
+    // better-auth JWT payload contains session and user objects
+    req.user = payload.user || payload.session?.user || payload;
+    
+    // Some routes expect id instead of _id or vice versa
+    if (!req.user.id && req.user._id) {
+        req.user.id = req.user._id;
+    } else if (req.user.id && !req.user._id) {
+        req.user._id = req.user.id;
+    }
+    
     next();
   } catch (error) {
+    console.error('JWT Verification Error:', error.message);
     return res.status(401).json({ msg: "unauthorized" });
   }
 };

@@ -19,6 +19,7 @@ const collections = {
   favorites: db.collection("favorites"),
   reports: db.collection("reports"),
   payments: db.collection("payments"),
+  sessions: db.collection("sessions"),
 };
 
 async function connectDB() {

@@ -54,7 +54,23 @@ router.patch('/users/:id/block', requireAdmin, async (req, res) => {
 // ── Admin: List all payments ───────────────────────────────────────────────────
 router.get('/payments', requireAdmin, async (req, res) => {
   try {
-    const payments = await collections.payments.find({}).sort({ paidAt: -1 }).toArray();
+    const payments = await collections.payments.aggregate([
+      { $sort: { paidAt: -1 } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userEmail',
+          foreignField: 'email',
+          as: 'userInfo'
+        }
+      },
+      {
+        $addFields: {
+          userName: { $arrayElemAt: ['$userInfo.name', 0] }
+        }
+      },
+      { $project: { userInfo: 0 } }
+    ]).toArray();
     res.json(payments);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -75,13 +91,41 @@ router.get('/stats', requireAdmin, async (req, res) => {
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]).toArray();
 
+    const recentUsers = await collections.users.find({}).sort({ createdAt: -1 }).limit(5).project({ name: 1, email: 1, createdAt: 1 }).toArray();
+    const recentRecipes = await collections.recipes.find({}).sort({ createdAt: -1 }).limit(5).project({ recipeName: 1, authorName: 1, createdAt: 1 }).toArray();
+    const recentReports = await collections.reports.find({}).sort({ createdAt: -1 }).limit(5).project({ recipeName: 1, reason: 1, status: 1, createdAt: 1 }).toArray();
+    const recentPayments = await collections.payments.aggregate([
+      { $sort: { paidAt: -1 } },
+      { $limit: 5 },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userEmail',
+          foreignField: 'email',
+          as: 'userInfo'
+        }
+      },
+      {
+        $addFields: {
+          userName: { $arrayElemAt: ['$userInfo.name', 0] }
+        }
+      },
+      { $project: { userInfo: 0 } }
+    ]).toArray();
+
     res.json({
       totalUsers: usersCount,
       totalPremiumMembers: premiumCount,
       totalRecipes: recipesCount,
       totalReports: totalReportsCount,
       pendingReports: pendingReportsCount,
-      totalRevenue: paymentsAggr.length > 0 ? paymentsAggr[0].total : 0
+      totalRevenue: paymentsAggr.length > 0 ? paymentsAggr[0].total : 0,
+      recentActivity: {
+        users: recentUsers,
+        recipes: recentRecipes,
+        reports: recentReports,
+        payments: recentPayments
+      }
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

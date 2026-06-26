@@ -24,12 +24,16 @@ const collections = {
 async function connectDB() {
   try {
     await client.connect();
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } catch (error) {
     console.error("MongoDB connection error:", error);
     process.exit(1);
   }
 }
+
+// client.connect(()=>{
+//   console.log('connecting to MongoDB')
+// }).catch(console.dir)
 
 module.exports = { connectDB, collections, client };

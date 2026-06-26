@@ -44,6 +44,7 @@ router.get('/dashboard-stats', verifyUser, async (req, res) => {
       totalFavorites,
       totalLikesReceived: totalLikes,
       isPremium,
+      role: user.role,
       // Expose recipe limit info for frontend UI
       recipeLimit: isPremium || user.role === 'admin' ? null : 2,
       canAddMore: isPremium || user.role === 'admin' || totalRecipes < 2
